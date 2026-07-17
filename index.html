@@ -503,46 +503,24 @@ input[type=checkbox]{accent-color:var(--accent);width:16px;height:16px;cursor:po
       <div class="sm-chip"><strong id="sc-rem">–</strong>Szabad req</div>
     </div>
 
-    <!-- Nyelvpár választó (live-ban is) -->
+<!-- Nyelvpár választó (live-ban is) -->
     <div class="card" style="padding:12px 14px">
-      <div class="lang-select-group">
-        <label>Forrás nyelv
-          <select id="live-src-lang" onchange="updateLiveChips()">
-            <option value="auto">🤖 Auto detect</option>
-            <option value="hu">🇭🇺 Magyar</option>
-            <option value="en">🇬🇧 English</option>
-            <option value="de">🇩🇪 Deutsch</option>
-            <option value="fr">🇫🇷 Français</option>
-            <option value="es">🇪🇸 Español</option>
-            <option value="it">🇮🇹 Italiano</option>
-            <option value="pl">🇵🇱 Polski</option>
-            <option value="ro">🇷🇴 Română</option>
-            <option value="uk">🇺🇦 Українська</option>
-            <option value="ru">🇷🇺 Русский</option>
-            <option value="zh">🇨🇳 中文</option>
-            <option value="ja">🇯🇵 日本語</option>
-            <option value="ar">🇸🇦 العربية</option>
-          </select>
-        </label>
-        <button class="swap-btn" onclick="swapLiveLangs()" title="Csere">⇄</button>
-        <label>Cél nyelv
-          <select id="live-tgt-lang" onchange="updateLiveChips()">
-            <option value="hu" selected>🇭🇺 Magyar</option>
-            <option value="en">🇬🇧 English</option>
-            <option value="de">🇩🇪 Deutsch</option>
-            <option value="fr">🇫🇷 Français</option>
-            <option value="es">🇪🇸 Español</option>
-            <option value="it">🇮🇹 Italiano</option>
-            <option value="pl">🇵🇱 Polski</option>
-            <option value="ro">🇷🇴 Română</option>
-            <option value="uk">🇺🇦 Українська</option>
-            <option value="ru">🇷🇺 Русский</option>
-            <option value="zh">🇨🇳 中文</option>
-            <option value="ja">🇯🇵 日本語</option>
-            <option value="ar">🇸🇦 العربية</option>
-          </select>
-        </label>
+      <div class="card-title">🌍 Fordítási irány</div>
+      <div style="display:flex;gap:8px">
+        <button id="dir-hu-en" class="btn btn-p" style="flex:1;font-size:14px"
+          onclick="setLangDir('hu','en')">
+          🇭🇺 Magyar → 🇬🇧 Angol
+        </button>
+        <button id="dir-en-hu" class="btn btn-gh" style="flex:1;font-size:14px"
+          onclick="setLangDir('en','hu')">
+          🇬🇧 Angol → 🇭🇺 Magyar
+        </button>
       </div>
+      <div style="font-size:11px;color:var(--text3);margin-top:8px;text-align:center">
+        🤖 Automatikus felismerés – mindkét irányban figyel és a beállított irányra fordít
+      </div>
+<input type="hidden" id="live-src-lang" value="hu"/>
+      <input type="hidden" id="live-tgt-lang" value="en"/>
     </div>
 
     <div class="viz-wrap">
@@ -2212,20 +2190,16 @@ function flushSegment(){
 async function processSegment(blob){
   if(!liveActive) return;
 
-  const srcLangSel = document.getElementById('live-src-lang')?.value || 'auto';
   const tgtLang = document.getElementById('live-tgt-lang')?.value || 'hu';
 
-  // STT prompt – utolsó fordítások szavaiból
   const sttPrompt = aiMem.recent.slice(-2).map(m => m.orig).join(' ').slice(0, 200);
-  const whisperLang = srcLangSel === 'auto' ? null : srcLangSel;
 
-  // ── RTT mérés indítása ──
   const totalStart = rttStart();
   const sttStart = rttStart();
 
   let sttResult = null;
   try {
-    sttResult = await stt(blob, whisperLang, sttPrompt);
+    sttResult = await stt(blob, null, sttPrompt);
     rttEnd(sttStart, 'stt');
     qualityMetrics.successCount++;
   } catch(e) {
@@ -2241,24 +2215,28 @@ async function processSegment(blob){
     return;
   }
 
-  // Audio hossz becslés (16kHz, 16bit mono = 32 byte/ms)
   const audioLengthMs = Math.round((blob.size / 2) / 16000 * 1000);
   qualityMetrics.totalAudioMs += audioLengthMs;
 
-  // Nyelvfelismerés
-  let srcLang = srcLangSel !== 'auto' ? srcLangSel : detectLangFromWhisper(detLang);
-  if(srcLang === tgtLang){
-    srcLang = tgtLang === 'hu' ? 'en' : 'hu';
-  }
+  // Auto nyelv felismerés – csak Magyar és Angol
+// Kiválasztott irány
+  const selSrc = document.getElementById('live-src-lang')?.value || 'hu';
+  const selTgt = document.getElementById('live-tgt-lang')?.value || 'en';
+
+  // Auto nyelv felismerés – csak Magyar és Angol
+  let srcLang = detectLangFromWhisper(detLang);
+  if(srcLang !== 'hu' && srcLang !== 'en') srcLang = selSrc;
+
+  // Ha nem a kiválasztott forrásnyelvен beszélt, de a célnyelven igen – fordítsuk meg
+  const autoTgt = srcLang === selSrc ? selTgt : selSrc;
 
   showPartial(`${LANG_FLAGS[srcLang] || '🌍'} ${escH(text)}`);
   setAIStatus('busy', 'fordítás...');
 
-  // ── Fordítás RTT mérés ──
   const transStart = rttStart();
   let trans = '';
   try {
-    trans = await translate(text, srcLang, tgtLang);
+    trans = await translate(text, srcLang, autoTgt);
     rttEnd(transStart, 'trans');
   } catch(e) {
     rttEnd(transStart, 'trans');
@@ -2269,27 +2247,24 @@ async function processSegment(blob){
 
   if(!trans) return;
 
-  // ── Teljes RTT lezárása ──
   const totalRTT = rttEnd(totalStart, 'total');
-
-  // ── MOS becslés ──
   const mosScore = estimateMOS(blob, text, totalRTT, audioLengthMs);
 
-  // Memória frissítés
-  addToMemory(srcLang, tgtLang, text, trans);
+  addToMemory(srcLang, autoTgt, text, trans);
   lastTranslation = trans;
 
   statTotal++;
   updStats();
-  saveHist(srcLang, tgtLang, text, trans);
+  saveHist(srcLang, autoTgt, text, trans);
 
   hidePartial();
-  addFeedItem(srcLang, tgtLang, text, trans, totalRTT, mosScore);
-  updateLiveChips(srcLang, tgtLang);
+  addFeedItem(srcLang, autoTgt, text, trans, totalRTT, mosScore);
+  updateLiveChips(srcLang, autoTgt);
   updateQualityUI();
 
-  if(cfg.ttsOrig) speak(text, srcLang);
-  speak(trans, tgtLang);
+  
+// TTS – csak a fordítást olvassa fel, az eredetit nem
+  speak(trans, autoTgt);
 }
 
 function detectLangFromWhisper(whisperLang){
@@ -2356,13 +2331,30 @@ function updateLiveChips(srcLang, tgtLang){
   }
 }
 
+function setLangDir(src, tgt){
+  document.getElementById('live-src-lang').value = src;
+  document.getElementById('live-tgt-lang').value = tgt;
+
+  const btnHuEn = document.getElementById('dir-hu-en');
+  const btnEnHu = document.getElementById('dir-en-hu');
+
+  if(src === 'hu'){
+    btnHuEn.className = 'btn btn-p';
+    btnEnHu.className = 'btn btn-gh';
+  } else {
+    btnHuEn.className = 'btn btn-gh';
+    btnEnHu.className = 'btn btn-p';
+  }
+
+  updateLiveChips(src, tgt);
+  toast(`🌍 Irány: ${src === 'hu' ? '🇭🇺 Magyar → 🇬🇧 Angol' : '🇬🇧 Angol → 🇭🇺 Magyar'}`, 'success');
+}
+
 function swapLiveLangs(){
-  const src = document.getElementById('live-src-lang');
-  const tgt = document.getElementById('live-tgt-lang');
-  if(!src || !tgt) return;
-  if(src.value === 'auto') return;
-  const tmp = src.value; src.value = tgt.value; tgt.value = tmp;
-  updateLiveChips();
+  const src = document.getElementById('live-src-lang').value;
+  const newSrc = src === 'hu' ? 'en' : 'hu';
+  const newTgt = newSrc === 'hu' ? 'en' : 'hu';
+  setLangDir(newSrc, newTgt);
 }
 
 function swapVideoLangs(){
@@ -2739,6 +2731,7 @@ async function processVideo(file){
         }
 
         // Auto language detect from first chunk
+        if(i > 0) await sleep(1500);
         if(i === 0 && srcLang === 'auto' && res.lang){
           const detected = detectLangFromWhisper(res.lang);
           srcLang = detected;
@@ -2796,7 +2789,7 @@ async function processVideo(file){
           });
         });
 
-        if(i + BATCH < rawSegs.length) await sleep(200);
+        if(i + BATCH < rawSegs.length) await sleep(2000);
       }
     }
 
